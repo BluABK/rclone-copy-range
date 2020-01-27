@@ -14,7 +14,7 @@ class DownloadSingleItem(threading.Thread):
     def __init__(self, thread_id, thread_cmd, thread_name):
         super().__init__()
         self.id = thread_id
-        self.cmd = "echo " + thread_cmd
+        self.cmd = thread_cmd
         self.name = thread_name
         self.logfile = '{}/thread-{}-{}.log'.format(THREAD_LOGDIR, self.id, self.name)
         self.done = False
