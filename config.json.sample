@@ -1,0 +1,8 @@
+{
+  "thread_logdir": ".rcr-logs",
+  "debug": "False",
+  "rclone_bin": "/usr/bin/rclone",
+  "rclone_args": "-v",
+  "rclone_site": "fixme:",
+  "thread_limit": 3
+}

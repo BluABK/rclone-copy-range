@@ -5,9 +5,10 @@ import sys
 from sys import argv
 import subprocess
 import threading
+import json
 
-THREAD_LOGDIR = ".rcr-logs"
-debug = True
+config = json.load('config.json')
+debug = True if config["debug"] == "True" else False
 
 
 class DownloadSingleItem(threading.Thread):
@@ -16,7 +17,7 @@ class DownloadSingleItem(threading.Thread):
         self.id = thread_id
         self.cmd = thread_cmd
         self.name = thread_name
-        self.logfile = '{}/thread-{}-{}.log'.format(THREAD_LOGDIR, self.id, self.name)
+        self.logfile = '{}/thread-{}-{}.log'.format(config["thread_logdir"], self.id, self.name)
         self.done = False
 
     def run(self):
@@ -25,11 +26,6 @@ class DownloadSingleItem(threading.Thread):
         :return:
         """
         try:
-            # print("Thread {}:".format(self.id))
-            # print("\t{}".format(self.cmd))
-
-            # print("Thread {}:\t{}".format(self.id, self.cmd))
-
             with open(self.logfile, 'wb') as f:
                 process = subprocess.Popen(shlex.split(self.cmd), stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
                 sys.stdout.write("Thread {}:\n".format(self.id))
@@ -61,13 +57,14 @@ if __name__ == "__main__":
         print("Error! Required parameters: <season_number> <season_directory_absolute_path> <start ep> <end ep>")
         exit(1)
 
-    if not os.path.isdir(THREAD_LOGDIR):
-        os.mkdir(THREAD_LOGDIR)
+    if not os.path.isdir(config["thread_logdir"]):
+        os.mkdir(config["thread_logdir"])
 
-    rclone_bin = "/usr/bin/rclone -v"
-    rclone_site = "tohru:"
+    rclone_bin = config["rclone_bin"]
+    rclone_args = config["rclone_args"]
+    rclone_site = config["rclone_site"]
 
-    thread_limit = 3
+    thread_limit = config["thread_limit"]
 
     season_number = str(argv[1])
     season_dir_abspath = str(argv[2])
@@ -105,7 +102,8 @@ if __name__ == "__main__":
     # Create threads
     for ep in relevant_episodes:
         season_dir = os.path.split(season_dir_abspath)[-1]
-        cmd = rclone_bin + " " + "copy" + " " + os.path.join(rclone_season_dir_abspath, quote(ep)) + " " + quote(season_dir) + os.path.sep
+        cmd = rclone_bin + " " + rclone_args + " " + "copy" + " " + \
+              os.path.join(rclone_season_dir_abspath, quote(ep)) + " " + quote(season_dir) + os.path.sep
 
         thread = DownloadSingleItem(thread_id_counter, cmd, ep.replace(' ', '.'))
         thread_list.append(thread)
