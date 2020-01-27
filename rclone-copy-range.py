@@ -7,7 +7,8 @@ import subprocess
 import threading
 import json
 
-config = json.load('config.json')
+with open('config.json', 'r') as f:
+    config = json.load(f)
 debug = True if config["debug"] == "True" else False
 
 
