@@ -1,16 +1,23 @@
 import os
 import re
-import time
+import shlex
+import sys
 from sys import argv
 import subprocess
 import threading
 
+THREAD_LOGDIR = ".rcr-logs"
+debug = True
+
 
 class DownloadSingleItem(threading.Thread):
-    def __init__(self, thread_id, thread_cmd):
+    def __init__(self, thread_id, thread_cmd, thread_name):
         super().__init__()
         self.id = thread_id
-        self.cmd = thread_cmd
+        self.cmd = "echo " + thread_cmd
+        self.name = thread_name
+        self.logfile = '{}/thread-{}-{}.log'.format(THREAD_LOGDIR, self.id, self.name)
+        self.done = False
 
     def run(self):
         """
@@ -20,14 +27,33 @@ class DownloadSingleItem(threading.Thread):
         try:
             # print("Thread {}:".format(self.id))
             # print("\t{}".format(self.cmd))
-            print("Thread {}:\t{}".format(self.id, self.cmd))
-            time.sleep(5)
+
+            # print("Thread {}:\t{}".format(self.id, self.cmd))
+
+            with open(self.logfile, 'wb') as f:
+                process = subprocess.Popen(shlex.split(self.cmd), stderr=subprocess.STDOUT, stdout=subprocess.PIPE)
+                sys.stdout.write("Thread {}:\n".format(self.id))
+                for line in iter(process.stdout.readline, b''):
+                    sys.stdout.write(line.decode(sys.stdout.encoding))
+                    f.write(line)
+                sys.stdout.write("\n")
+
         except Exception as e:
             raise e
+
+        self.done = True
+        os.remove(self.logfile)
 
 
 def quote(s):
     return "\"" + s + "\""
+
+
+def log(s):
+    if debug:
+        logfile = 'debug.log'
+        with open(logfile, 'a') as f:
+            f.write(s + '\n')
 
 
 if __name__ == "__main__":
@@ -35,35 +61,41 @@ if __name__ == "__main__":
         print("Error! Required parameters: <season_number> <season_directory_absolute_path> <start ep> <end ep>")
         exit(1)
 
+    if not os.path.isdir(THREAD_LOGDIR):
+        os.mkdir(THREAD_LOGDIR)
+
     rclone_bin = "/usr/bin/rclone -v"
     rclone_site = "tohru:"
 
     thread_limit = 3
 
-    season = argv[1]
+    season_number = str(argv[1])
     season_dir_abspath = str(argv[2])
     ep_start = int(argv[3])
     ep_end = int(argv[4])
     ep_range = range(ep_start, ep_end + 1)
 
     # Get list of season episodes/files from rclone:
-    rclone_season_dir = rclone_site + quote(season_dir_abspath)
-    cmd = rclone_bin + " " + "ls" + " " + rclone_season_dir
+    rclone_season_dir_abspath = rclone_site + quote(season_dir_abspath)
+    cmd = rclone_bin + " " + "ls" + " " + rclone_season_dir_abspath
+
+    log("rclone remote listing cmd: {}".format(cmd))
     # Get list from rclone shellexec, decode UTF-8, split on newlines and strip filesize info from each item:
+    print("Getting episode list from rclone remote...")
     episode_list = [" ".join(s.split(' ')[1:]) for s in
                     subprocess.check_output(cmd, shell=True).decode('utf-8').splitlines()]
 
-    # print(episode_list)
+    log("Episodes found: {}".format(", ".join(episode_list)))
 
     # Create list of relevant episodes
     relevant_episodes = []
     for ep_number in ep_range:
-        regex = '^.*S01E' + str(ep_number) + '.*$'
+        regex = '^.*S' + str(season_number) + 'E' + str(ep_number) + '.*$'
         p = re.compile(regex)
         res = filter(p.match, episode_list)
         relevant_episodes.append(list(res)[0])
 
-    print(relevant_episodes)
+    log("Relevant episodes: {}".format(", ".join(relevant_episodes)))
 
     # Download relevant episodes
     thread_id_counter = 0
@@ -73,45 +105,37 @@ if __name__ == "__main__":
     # Create threads
     for ep in relevant_episodes:
         season_dir = os.path.split(season_dir_abspath)[-1]
-        cmd = rclone_bin + " " + "copy" + " " + rclone_season_dir + " " + quote(season_dir)
+        cmd = rclone_bin + " " + "copy" + " " + os.path.join(rclone_season_dir_abspath, quote(ep)) + " " + quote(season_dir) + os.path.sep
 
-        thread = DownloadSingleItem(thread_id_counter, cmd)
+        thread = DownloadSingleItem(thread_id_counter, cmd, ep.replace(' ', '.'))
         thread_list.append(thread)
         threads_to_run.append(thread)
         thread_id_counter += 1
 
     # Start threads
-    running_thread_counter = 0
     running_threads = []
     running = True
     while running:
         # Run threads if not above limit
-        if running_thread_counter < thread_limit:
+        if len(running_threads) < thread_limit:
             for t in threads_to_run:
-                if running_thread_counter < thread_limit:
-                    print("Run thread {}".format(t.id))
+                if len(running_threads) < thread_limit:
+                    log("Run thread {}: {}".format(t.id, t.name))
                     t.start()
-                    threads_to_run.pop(threads_to_run.index(t))
                     running_threads.append(t)
-                    running_thread_counter += 1
+                    threads_to_run.pop(threads_to_run.index(t))
 
         # join Threads
         for t in running_threads:
-            print("Attempting to join thread {}".format(t.id))
-            t.join()
-            # Pop joined thread
-            if not t.is_alive():
-                print("Popping joined thread: {}.".format(t.id))
-                running_threads.pop(running_threads.index(t))
-                running_thread_counter -= 1
+            # Only attempt to join if thread considers itself done (or we'll hang on the same one for ages)
+            if t.done:
+                log("Attempting to join thread {}: {}".format(t.id, t.name))
+                t.join()
+                # Pop joined thread
+                if not t.is_alive():
+                    log("Popping joined thread: {}: {}.".format(t.id, t.name))
+                    running_threads.pop(running_threads.index(t))
 
         if len(threads_to_run) == 0 and len(running_threads) == 0:
             running = False
 
-    # # join remaining Threads
-    # for t in running_threads:
-    #     print("Attempting to join remaining thread {}".format(t.id))
-    #     t.join()
-    #     # Pop joined thread
-    #     if not t.is_alive():
-    #         running_threads.pop(running_threads.index(t))
